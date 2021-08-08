@@ -1,19 +1,96 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# ### TODO
-# - Hover verbessern (oben wird abgeschnitten, bessere eigenschaften anzeigen)
-# - Page title anpassen
+# # V5: Konnektoren erkennen.
+# Dieses Programm liest das deutsche Konnektorenlexikon DimLex als JSON ein (heruntergeladen von https://github.com/discourse-lab/Connective-Lex.info/blob/master/Web%20app/xml/dimlex.json, gefunden auf connective-lex.info) ein und merkt sich den Konnektor-string als Regular Expression, sowie die Information, ob das Wort auch eine Nicht-Konnektor Lesart hat. 
+# 
+# Dann kann ein Text als txt-Datei eingelesen werden, welcher in eine html-Datei transformiert wird, die denselben Text enthält, in dem aber alle Wörter, die mit einem Konnektor-string übereinstimmen, farblich markiert sind: 
+# - Grün = dieses Wort ist in jedem Fall ein Konnektor.
+# - Rot = dieses Wort kann ein Konnektor sein, muss aber nicht. 
+# 
+# 
 
-# In[351]:
+# ### 1. Import von benötigten Libraries
+# Die Implementierung basiert vorwiegend auf Regular Expressions, daher wird die Bibliothek "re" benötigt. Darüber hinaus brauchen wir "json" um die konvertierte DimLex JSON-Datei dimlex.json einfach parsen zu können.
+
+# In[501]:
 
 
-import json, re, string
+import json, re
 
 
-# In[389]:
+# ### 2. Einlesen der DimLex JSON-Datei
+# Da JSON in Python einfacher als XML einzulesen ist und ich persönlich mehr Erfahrung damit habe, habe ich mich dafür entschieden, die konvertierte dimlex.json aus dem Git Repository für connective-lex.info herunterzuladen und diese einzulesen.
+
+# In[390]:
 
 
+with open('data/dimlex.json') as j:
+    dimlex_raw = json.load(j)
+
+
+# #### 2.1 Daten in geeigneter Datenstruktur speichern
+# Es wird ein Dictionary mit den eingelesenen, benötigten Daten erstellt. Da ich in diesem Programm mit Regular expressions arbeite, habe ich die eingelesenen Konnektoren in Regex umgewandelt (z.B. `'(^| )([zZ]war)( |\\.|,|\\?|!|$)'`) - diese sind die Keys des Dictionaries.
+# Die Values geben Informationen über die Eigenschaft "auf jeden Fall ein Konnektor sein oder nicht" und wurde aus dem DimLex adaptiert (z.B. `{'t': 0}`).
+
+# In[503]:
+
+
+## Creates dictionary that saves necessary information about connector
+# Konnektor dict initialisieren
+conn_dict = {}
+# durch alle Einträge im DimLex iterieren
+for entry in dimlex_raw['entry']:
+    # Regular expression für Satzanfang (Großbuchstabe) und Satzmitte (Kleinbuchstabe) erstellen 
+    new_conn = '[' + entry['word'][0].lower()+entry['word'][0].upper() + ']' + entry['word'][1:]
+    # Drei Punkte in der Mitte eines Konnektorstrings werden mit einer Placeholder Regex ersetzt
+    # Diese sollte alles matchen, was in der Mitte steht außer Satzzeichen
+    if '...' in new_conn:
+        new_conn = re.sub('\s?\.{3}\s?', ' [^.?!]+ ', new_conn)
+    # Leerzeichen um das Wort/die Wortgruppe entfernen 
+    new_conn = new_conn.strip()
+    # In den Orths nachschauen, ob es noch andere Schreibweisen gibt, die wir noch nicht in der Regex haben
+    for orth in entry['orths']['orth']:
+        # Fügt Einzelteile einer Variante zusammen
+        orth_variant = ' '.join(part['t'] for part in orth['part'])
+        # Überprüfen, ob die Variante bereits von der Regex abgedeckt wird
+        if not re.search(new_conn, orth_variant):
+            # Wenn nicht, machen wir das gleiche wie oben um das Wort am Satzanfang/-mitte abzufangen
+            orth_variant = '[' + orth_variant[0].lower()+orth_variant[0].upper() + ']' + orth_variant[1:]
+            # Und dann wird es mit einem "oder" an die Regex angehangen
+            new_conn += '|' + orth_variant
+    # Start- und Endkontext der Regex definieren und bisherige Konnektorregex einfügen
+    conn_regex = '(^| )(' + new_conn + ')( |\.|,|\?|!|$)'
+    # Wir überprüfen, ob die Regex schon im Dict ist (unwahrscheinlich, aber sicher ist sicher)
+    if conn_regex not in conn_dict:
+        # Erstelle Eintrag mit Ambiguitätenwert für "non_conn"
+        conn_dict[conn_regex] = {'non_conn': entry['ambiguity']['non_conn']}
+        # Erstelle leeres Beispiel, da nicht alle Konnektoren ein Beispiel für Nicht-Konnektor enthalten
+        conn_dict[conn_regex]['example'] = ''
+        # Falls es aber einen Beispielsatz gibt, füge ihn an dieser Stelle ein
+        if 'example' in entry['non_conn_reading']:
+            for sub_entry in entry['non_conn_reading']['example']:
+                # Inklusive Tag, falls es eines gibt
+                if 't' in sub_entry and 'type' in sub_entry:
+                    conn_dict[conn_regex]['example'] += '{}: {}\n'.format(sub_entry.get('type'),sub_entry['t'])
+                # Wenn es keins gibt, nur den Beispielsatz hinzufügen
+                elif 't' in sub_entry:
+                    conn_dict[conn_regex]['example'] += '{}\n'.format(sub_entry['t'])
+    # gibt Zeile und Regex aus, falls schon im Dict vorhanden
+    else: 
+        print(dimlex_raw['entry'].index(entry), conn_regex, entry['ambiguity']['non_conn'], 'already in dict')
+
+
+# ### 3. Text einlesen und HTML String erstellen
+# Der eingelesene Text (txt-Datei mit einer Überschrift in der ersten Zeile) wird Zeile für Zeile eingelesen und in einen HTML-String umgewandelt. Diese enthält derzeit die eingefärbten Konnektoren und einen Hovertext mit den "non_conn" Informationen aus dem DimLex Lexikon.
+# 
+# Note: Ich wollte urpsrünglich noch Beispielsätze mit in den Hovertext einbauen, diese machten aber den Hovertext zu lang und nicht gut überschaubar. Für ein anderes Projekt könnte man aber auch andere Informationen in den Hovertext einbauen, um wie auf der connective-lex.info page schnell zu anderen Infos wie semantische Rollen oder syntaktische Stellung zu erhalten.
+
+# In[527]:
+
+
+## Style-elemente (CSS) definieren
+# tooltip nach: https://www.w3schools.com/css/css_tooltip.asp
 CSS = """<style>\n
 * {
   font-family: monospace;
@@ -45,7 +122,6 @@ CSS = """<style>\n
   text-align: center;
   border-radius: 6px;
   padding: 5px 0;
-  width: 120px;
   bottom: 100%;
   left: 50%;
   margin-left: -60px; /* Use half of the width (120/2 = 60), to center the tooltip */
@@ -72,111 +148,77 @@ CSS = """<style>\n
 </style>"""
 
 
-# In[390]:
+# In[529]:
 
 
-with open('data/dimlex.json') as j:
-    dimlex_raw = json.load(j)
-
-
-# In[423]:
-
-
-## Creates dictionary that saves necessary information about connector
-conn_dict = {}
-for entry in dimlex_raw['entry']:
-    word_regex = '(^| )(' + entry['word']
-    if '...' in word_regex:
-        word_regex = re.sub('\s?\.{3}\s?',' [^.?!]+ ',word_regex)
-    for orth in entry['orths']['orth']:
-        orth_variant = ' '.join(part['t'] for part in orth['part'])
-        word_regex += '|' + orth_variant
-        # print(orth_variant)
-    word_regex += ')( |\.|\?|!|$)'
-    if word_regex not in conn_dict:
-        # print(word_regex)
-        conn_dict[word_regex] = {'non_conn': entry['ambiguity']['non_conn']}
-        # print(entry['ambiguity'], entry['non_conn_reading'])
-        conn_dict[word_regex]['example'] = ''
-        if 'example' in entry['non_conn_reading']:
-            # if entry['non_conn_reading']['example'] != [[]]:
-            
-            for sub_entry in entry['non_conn_reading']['example']:
-                if 't' in sub_entry and 'type' in sub_entry:
-                    conn_dict[word_regex]['example'] += '{}: {}\n'.format(sub_entry.get('type'),sub_entry['t'])
-                elif 't' in sub_entry:
-                    conn_dict[word_regex]['example'] += '{}\n'.format(sub_entry['t'])
-                    
-            
-    else: 
-        print(dimlex_raw['entry'].index(entry), word_regex, entry['ambiguity']['non_conn'], 'already in dict')
-
-
-# In[424]:
-
-
-html_string='<!DOCTYPE html>\n<html>\n<head>\n<title>ConnReco</title>\n</head>\n<body><div class="container">\n<p>\n<h1>' # start of paragraph
+# Beginn des HTML-Strings, der später in die HTML-Datei geschrieben werden soll
+html_string = """
+<!DOCTYPE html>
+<html>
+<head>
+<title>V5: Konnektoren erkennen</title>
+{}
+</head>
+<body>
+<div class="container">
+<h1>
+""".format(CSS)
+# Wir starten mit einen geöffneten Header (siehe vorherige Zeile) und setzen einen Boolean, weil dieser noch nicht geschlossen ist
 header_closed = False
-with open("data/coronaimpfung.txt") as txt: # https://www.dw.com/de/coronaimpfung-die-m%C3%A4r-von-der-unfruchtbarkeit/a-58733733
+# Öffne die eingelesene Textdatei
+with open("data/kuechentipps.txt") as txt: 
+    # Lese Zeile für Zeile ein und bearbeite diese
     for line in txt:
+        # Wenn die erste Leerzeile (ohne Umbruch/Leerzeichen) kommt (deshalb muss Überschrift in der ersten Zeile stehen)
         if line.strip() == '': 
-            html_string+="</p>\n<p>"
+            # ... und der Heade noch nicht geschlossen ist
             if header_closed == False:
-                html_string += "</h1>"
+                # schließe den header und beginne neuen Absatz
+                html_string += "</h1>\n<p>"
+                # setze Bool auf True
                 header_closed = True
-            
+            # Wenn wir schon eine Überschrift haben, fang nur einen neuen Absatz an
+            else:
+                html_string+="</p>\n<p>"
+        
+        # Jetzt zum eigentlichen Bearbeiten des Textes
         html_line = line
-        for conn_reg in conn_dict:
-            # print(conn_reg, conn_dict[conn_reg])
-            ttt = conn_dict[conn_reg]['example']
-            rr = '\g<2><span class="tooltiptext">{ttt}</span></span> '.format(ttt=ttt)
-            if conn_dict[conn_reg]['non_conn']['t'] == 0:
-                rr = ' <span class="tooltip green">' + rr
-            else: 
-                rr = ' <span class="tooltip red">' + rr
-            html_line = re.sub(conn_reg, r'{}'.format(rr), html_line)
+        # Das Konnektorendict wird nach Keylänge (=Länge des Strings) sortiert, weil längere Konnektorenstrings
+        # Priorität haben sollen z.B. "sowohl ... als auch" hat Priorität über "als" oder "auch"
+        # Das ist wichtig, weil sonst nur die kürzeren Strings markiert werden könnten
+        for conn_reg in sorted(conn_dict, key=len, reverse=True):
+            # Wir schauen erst einmal, ob die Regex für unsere Zeile relevant ist
+            if re.search(conn_reg, html_line):
+                # Hier nehmen wir den Text für den Tooltip heraus (derzeit nur Infos zur Frequenz des Auftretens als Non-Connector)
+                ttt = conn_dict[conn_reg]['non_conn']
+                # Tooltiptext in den String einfügen (nur für Konnektor)
+                html_substring = '\g<2><span class="tooltiptext">{ttt}</span></span>\g<3>'.format(ttt=ttt)
+                # Überprüfe, ob der Konnektor auch ein Nicht-Konnektor sein kann
+                if conn_dict[conn_reg]['non_conn']['t'] == 0:
+                    # Wenn nicht --> färbe grün
+                    html_substring = '\g<1><span class="tooltip green">' + html_substring
+                else: 
+                    # wenn ja --> färbe rot
+                    html_substring = '\g<1><span class="tooltip red">' + html_substring
+                # Ersetze alten substring mithilfe der Konnektorregex
+                html_line = re.sub(conn_reg, r'{}'.format(html_substring), html_line)
+        # füge alles zum html string hinzu
         html_string+=html_line
         html_string+="\n"
+# schließe html syntax
 html_string+="</div></body>\n</html>"
 
 
-# In[425]:
+# ### 4. HTML-Datei schreiben
+# Die Output-Datei wird nach html/ geschrieben und enthält den zuvor erhaltenen HTML-String.
+
+# In[531]:
 
 
-html = open('html/output.html', mode='w', encoding='utf8') 
-html.write(html_string)
-## add style: https://www.w3schools.com/css/css_tooltip.asp
-html.write(CSS)
-html.close()
+with open('html/output.html', mode='w', encoding='utf8') as html:
+    html.write(html_string)
 
 
-# In[278]:
-
-
-html_string
-conn_dict
-
-
-# In[250]:
-
-
-s = "hält sich aber hartnäckig aber."
-
-
-# In[251]:
-
-
-re.sub('(^| )(aber|aber|Aber)( |\.|\?|!|$)', r' <font color=\"green\">\g<2></font> ', s)
-
-
-# In[224]:
-
-
-re.search('[\s^](aber|aber|Aber)[\\s\\.?!\\$]', s)
-
-
-# In[ ]:
-
-
-
-
+# Fertig :)
+# Erwarteter Output:
+# ![](material/screenshot.png)

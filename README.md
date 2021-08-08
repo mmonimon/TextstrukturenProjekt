@@ -4,3 +4,9 @@ V5: Konnektoren erkennen. Sie lesen das deutsche Konnektorenlexikon (download vo
 
 
 https://github.com/discourse-lab/Connective-Lex.info/blob/master/Original%20lexicons/DiMLex/DimLex.xml
+
+
+## TODO: 
+
+- Python Script für CLI anpassen
+- README anpassen
