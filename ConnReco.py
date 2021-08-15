@@ -1,5 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
+# author: Monique Noss
+# matrikelnr.: 794007
+# date: 15.08.2021
+# ConnReco.py
 
 # # V5: Konnektoren erkennen.
 # Dieses Programm liest das deutsche Konnektorenlexikon DimLex als JSON ein (heruntergeladen von https://github.com/discourse-lab/Connective-Lex.info/blob/master/Web%20app/xml/dimlex.json, gefunden auf connective-lex.info) ein und merkt sich den Konnektor-string als Regular Expression, sowie die Information, ob das Wort auch eine Nicht-Konnektor Lesart hat. 
